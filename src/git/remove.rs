@@ -878,8 +878,13 @@ mod tests {
         assert!(staged.exists(), "the lock holder owns the deletion");
 
         drop(holder);
-        drain_trash(&trash).unwrap();
-        assert!(staged_trash_entries(&trash).is_empty());
+        // A child that a concurrent test forks while `holder` is open inherits
+        // the lock until it execs, so a drain can still find it held for an
+        // instant and leave the deletion to that phantom holder.
+        crate::testing::wait_for("a drain to delete the staged entries", || {
+            drain_trash(&trash).unwrap();
+            staged_trash_entries(&trash).is_empty()
+        });
         assert!(foreign.exists());
         assert!(staged_trash_entries(&temp.path().join("missing")).is_empty());
     }

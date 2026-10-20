@@ -9011,13 +9011,35 @@ fn test_switch_path_occupied_suggests_path_in_clobber_hint(repo: TestRepo) {
     let custom = repo.root_path().parent().unwrap().join("occupied");
     std::fs::create_dir_all(&custom).unwrap();
 
-    // The `--clobber` suggestion must keep `--path`, or following it would
-    // back up the template's path instead of this one.
+    // `--path` can name any directory, so the hint suggests another path
+    // rather than deleting this one. The `--clobber` suggestion must keep
+    // `--path`, or following it would back up the template's path instead.
     snapshot_switch(
         "switch_path_occupied",
         &repo,
         &["--create", "feature-y", "--path", "../occupied"],
     );
+}
+
+#[rstest]
+fn test_switch_path_naming_another_worktree(mut repo: TestRepo) {
+    let occupied = repo.add_worktree("feature-z");
+
+    // Another branch's worktree is reported by its branch, never moved aside
+    // by `--clobber`.
+    snapshot_switch(
+        "switch_path_another_worktree",
+        &repo,
+        &[
+            "--create",
+            "feature-n",
+            "--clobber",
+            "--path",
+            "../repo.feature-z",
+        ],
+    );
+
+    assert!(occupied.join(".git").is_file());
 }
 
 #[rstest]

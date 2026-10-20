@@ -6244,3 +6244,58 @@ approved-commands = [{hook:?}]
     assert!(!parent.join("PWNED").exists());
     let _ = fs::remove_file(staged_path);
 }
+
+/// WORKTRUNK_FIRST_OUTPUT exits after validation, before approval and removal.
+/// Used by time-to-first-output benchmarks.
+#[rstest]
+fn test_remove_first_output_exits_cleanly(mut repo: TestRepo) {
+    let worktree = repo.add_worktree("feature-bench");
+
+    let output = repo
+        .wt_command()
+        .args(["remove", "--yes"])
+        .current_dir(&worktree)
+        .env("WORKTRUNK_FIRST_OUTPUT", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "WORKTRUNK_FIRST_OUTPUT should exit 0: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(worktree.exists());
+}
+
+/// `wt remove` with no argument, run from a worktree moved without
+/// `git worktree repair`, refuses: `@` names the directory the user stands
+/// in, not the branch's registration at its old path, which removing would
+/// prune and leave this checkout with a dangling `.git` file.
+#[rstest]
+fn test_remove_no_argument_in_moved_worktree_refuses(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    let moved = worktree_path.with_file_name("moved-feature");
+    fs::rename(&worktree_path, &moved).unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["remove", "--foreground", "--yes"])
+        .current_dir(&moved);
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&moved)
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+}

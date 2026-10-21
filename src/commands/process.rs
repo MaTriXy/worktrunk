@@ -280,6 +280,7 @@ fn spawn_detached_exec_unix(
         .stderr(Stdio::from(log_file))
         .process_group(0);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
     worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
@@ -315,6 +316,7 @@ fn spawn_detached_exec_windows(
         .stderr(Stdio::from(log_file))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
     set_background_hook_env(&mut cmd, is_background_hook);
     worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
@@ -384,7 +386,7 @@ pub fn sweep_trash(repo: &Repository) {
             spawn_detached(
                 repo,
                 &repo.wt_dir(),
-                &build_drain_trash_command(executable, &trash_dir),
+                &build_drain_trash_command(executable, repo),
                 "",
                 &HookLog::Shared(InternalOp::TrashSweep),
             )
@@ -394,15 +396,20 @@ pub fn sweep_trash(repo: &Repository) {
     }
 }
 
-/// Shell argv that runs `wt _drain-trash <trash_dir>`: a fixed script, its
-/// `$0`, then native arguments. Paths are never interpolated into shell source.
-pub fn build_drain_trash_command(executable: PathBuf, trash_dir: &Path) -> Vec<OsString> {
+/// Shell argv that runs `wt -C <git-common-dir> _drain-trash`: a fixed script,
+/// its `$0`, then native arguments. Paths are never interpolated into shell
+/// source. The drain derives the trash directory from the repository it
+/// discovers, so it can't be pointed at a directory outside a trash. `-C`
+/// names that repository because the spawn's cwd may be the placeholder of a
+/// worktree the removal just deleted.
+pub fn build_drain_trash_command(executable: PathBuf, repo: &Repository) -> Vec<OsString> {
     vec![
         OsString::from(r#"exec "$@""#),
         OsString::from("wt"),
         executable.into_os_string(),
+        OsString::from("-C"),
+        repo.git_common_dir().as_os_str().to_os_string(),
         OsString::from("_drain-trash"),
-        trash_dir.as_os_str().to_os_string(),
     ]
 }
 
@@ -502,12 +509,16 @@ mod tests {
     }
 
     #[test]
-    fn drain_command_passes_trash_dir_as_its_own_argument() {
-        let trash_dir = Path::new("/repo/with space-'$(echo PWNED)\n/.git/wt/trash");
-        let args = build_drain_trash_command(PathBuf::from("/bin/wt"), trash_dir);
+    fn drain_command_passes_paths_as_their_own_arguments() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        let executable = PathBuf::from("/opt/with space-'$(echo PWNED)\n/wt");
+        let args = build_drain_trash_command(executable.clone(), &repo);
         assert_eq!(args[0], r#"exec "$@""#);
-        assert_eq!(args[3], "_drain-trash");
-        assert_eq!(args[4], trash_dir.as_os_str());
+        assert_eq!(args[2], executable.as_os_str());
+        assert_eq!(args[3], "-C");
+        assert_eq!(args[4], repo.git_common_dir().as_os_str());
+        assert_eq!(args[5], "_drain-trash");
     }
 
     #[test]
